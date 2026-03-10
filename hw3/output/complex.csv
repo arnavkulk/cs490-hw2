@@ -1,0 +1,13 @@
+perturbation_method,metric_type,value
+original,token_length,22.5052
+original,max_dependency_depth,5.2353
+original,mean_dependency_arc_length,2.8012
+adjective_to_relative_clause,token_length,31.8356
+adjective_to_relative_clause,max_dependency_depth,6.5353
+adjective_to_relative_clause,mean_dependency_arc_length,3.3254
+parenthetical_insertion,token_length,29.0955
+parenthetical_insertion,max_dependency_depth,5.6633
+parenthetical_insertion,mean_dependency_arc_length,3.3311
+appositive_person_insertion,token_length,31.3223
+appositive_person_insertion,max_dependency_depth,6.2643
+appositive_person_insertion,mean_dependency_arc_length,3.3676
