@@ -28,6 +28,9 @@ import numpy as np
 import pandas as pd
 import spacy
 import torch
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 from datasets import load_dataset
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
@@ -41,9 +44,9 @@ MNLI_LABELS = {0: "entailment", 1: "neutral", 2: "contradiction"}
 
 DEFAULT_MODELS = [
     "typeform/distilbert-base-uncased-mnli",
+    "valhalla/distilbart-mnli-12-6",
+    "PavanNeerudu/gpt2-finetuned-mnli",
     "typeform/mobilebert-uncased-mnli",
-    "Alireza1044/albert-base-v2-mnli",
-    "vish88/xlnet-base-mnli-finetuned",
 ]
 
 PERTURBATION_METHODS = [
@@ -416,9 +419,13 @@ def evaluate_models(
             try:
                 print(f"    Loading {model_name}...")
                 tokenizer = AutoTokenizer.from_pretrained(model_name)
+                if tokenizer.pad_token is None:
+                    tokenizer.pad_token = tokenizer.eos_token
                 model = AutoModelForSequenceClassification.from_pretrained(
                     model_name
                 )
+                if model.config.pad_token_id is None:
+                    model.config.pad_token_id = tokenizer.pad_token_id
                 model.to(device).eval()
                 label_map = _build_label_map(model)
             except Exception as exc:
@@ -495,6 +502,269 @@ def aggregate_complexity(
             )
 
     return rows
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Report figures and error analysis
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def generate_scatter_plots(perf_df: pd.DataFrame, complex_df: pd.DataFrame,
+                           output_dir: str):
+    """Scatter plots: complexity metric (X) vs accuracy (Y), one per metric.
+    Each point is a (model, perturbation) pair."""
+    perf = perf_df.copy()
+    comp = complex_df.copy()
+
+    model_short = {m: m.rsplit("/", 1)[-1] for m in perf["model"].unique()}
+    markers = ["o", "s", "^", "D", "v", "P"]
+    colors = plt.cm.tab10.colors
+
+    for metric in COMPLEXITY_METRICS:
+        fig, ax = plt.subplots(figsize=(7, 5))
+        metric_rows = comp[comp["metric_type"] == metric]
+        method_to_val = dict(
+            zip(metric_rows["perturbation_method"], metric_rows["value"])
+        )
+
+        for i, model_name in enumerate(perf["model"].unique()):
+            model_rows = perf[perf["model"] == model_name]
+            xs, ys = [], []
+            for _, row in model_rows.iterrows():
+                x = method_to_val.get(row["perturbation_method"])
+                if x is not None:
+                    xs.append(x)
+                    ys.append(row["performance"])
+            ax.scatter(xs, ys, label=model_short[model_name],
+                       marker=markers[i % len(markers)],
+                       color=colors[i % len(colors)], s=80, zorder=3)
+
+        ax.set_xlabel(metric.replace("_", " ").title(), fontsize=12)
+        ax.set_ylabel("Accuracy", fontsize=12)
+        ax.set_title(f"Accuracy vs {metric.replace('_', ' ').title()}",
+                     fontsize=13)
+        ax.legend(fontsize=9)
+        ax.grid(True, alpha=0.3)
+        fig.tight_layout()
+        path = os.path.join(output_dir, f"scatter_{metric}.png")
+        fig.savefig(path, dpi=150)
+        plt.close(fig)
+        print(f"  Saved {path}")
+
+
+def generate_accuracy_drop_chart(perf_df: pd.DataFrame, output_dir: str):
+    """Grouped bar chart showing accuracy drop from original per model."""
+    perf = perf_df.copy()
+    model_short = {m: m.rsplit("/", 1)[-1] for m in perf["model"].unique()}
+
+    orig = perf[perf["perturbation_method"] == "original"].set_index("model")[
+        "performance"
+    ]
+    pert_methods = [m for m in perf["perturbation_method"].unique()
+                    if m != "original"]
+    models = list(orig.index)
+
+    x = np.arange(len(models))
+    width = 0.25
+    fig, ax = plt.subplots(figsize=(9, 5))
+    colors = plt.cm.Set2.colors
+
+    for j, method in enumerate(pert_methods):
+        drops = []
+        for m in models:
+            row = perf[(perf["model"] == m) &
+                       (perf["perturbation_method"] == method)]
+            drop = (orig[m] - row["performance"].values[0]) * 100 if len(row) else 0
+            drops.append(drop)
+        short_method = method.replace("_", " ").replace(
+            "adjective to relative clause", "adj→rel clause"
+        ).replace("parenthetical insertion", "parenthetical"
+        ).replace("appositive person insertion", "appositive")
+        ax.bar(x + j * width, drops, width, label=short_method,
+               color=colors[j % len(colors)])
+
+    ax.set_ylabel("Accuracy Drop (pp)", fontsize=12)
+    ax.set_title("Accuracy Drop by Model and Perturbation", fontsize=13)
+    ax.set_xticks(x + width)
+    ax.set_xticklabels([model_short[m] for m in models], fontsize=9)
+    ax.legend(fontsize=9)
+    ax.grid(True, axis="y", alpha=0.3)
+    fig.tight_layout()
+    path = os.path.join(output_dir, "accuracy_drop.png")
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+    print(f"  Saved {path}")
+
+
+def run_error_analysis(
+    model_names: list[str],
+    original: list[dict],
+    perturbed: dict[str, list[dict]],
+    output_dir: str,
+) -> pd.DataFrame:
+    """Identify examples where model was correct on original but wrong on
+    perturbed. Break down by matched/mismatched split."""
+    rows: list[dict] = []
+
+    orig_by_id = {ex["id"]: ex for ex in original}
+
+    for model_name in model_names:
+        safe = model_name.replace("/", "__")
+        short = model_name.rsplit("/", 1)[-1]
+
+        orig_cache = os.path.join(output_dir, f"preds_{safe}_original.json")
+        if not os.path.exists(orig_cache):
+            continue
+        with open(orig_cache) as f:
+            orig_preds = json.load(f)
+        orig_pred_by_id = {
+            ex["id"]: pred for ex, pred in zip(original, orig_preds)
+        }
+
+        for method, pert_exs in perturbed.items():
+            if not pert_exs:
+                continue
+            pert_cache = os.path.join(output_dir, f"preds_{safe}_{method}.json")
+            if not os.path.exists(pert_cache):
+                continue
+            with open(pert_cache) as f:
+                pert_preds = json.load(f)
+
+            matched_correct_orig = 0
+            matched_broke = 0
+            mismatched_correct_orig = 0
+            mismatched_broke = 0
+
+            for ex, pert_pred in zip(pert_exs, pert_preds):
+                eid = ex["id"]
+                label = ex["label"]
+                orig_pred = orig_pred_by_id.get(eid)
+                if orig_pred is None:
+                    continue
+
+                is_matched = ex["split"] == "matched"
+                orig_correct = orig_pred == label
+                pert_correct = pert_pred == label
+
+                if is_matched:
+                    if orig_correct:
+                        matched_correct_orig += 1
+                        if not pert_correct:
+                            matched_broke += 1
+                else:
+                    if orig_correct:
+                        mismatched_correct_orig += 1
+                        if not pert_correct:
+                            mismatched_broke += 1
+
+            for split_tag, n_correct, n_broke in [
+                ("matched", matched_correct_orig, matched_broke),
+                ("mismatched", mismatched_correct_orig, mismatched_broke),
+            ]:
+                rate = n_broke / n_correct if n_correct > 0 else 0.0
+                rows.append({
+                    "model": short,
+                    "perturbation_method": method,
+                    "split": split_tag,
+                    "originally_correct": n_correct,
+                    "broke_after_perturbation": n_broke,
+                    "failure_rate": round(rate, 4),
+                })
+
+    df = pd.DataFrame(rows)
+    path = os.path.join(output_dir, "error_analysis.csv")
+    df.to_csv(path, index=False)
+    print(f"  Saved {path}")
+    return df
+
+
+def generate_error_analysis_chart(error_df: pd.DataFrame, output_dir: str):
+    """Bar chart comparing matched vs mismatched failure rates."""
+    if error_df.empty:
+        return
+
+    models = error_df["model"].unique()
+    methods = error_df["perturbation_method"].unique()
+    n_groups = len(models) * len(methods)
+
+    fig, ax = plt.subplots(figsize=(max(10, n_groups * 0.8), 5))
+    labels = []
+    matched_rates = []
+    mismatched_rates = []
+
+    for model in models:
+        for method in methods:
+            short_method = method.replace("_", "\n")[:20]
+            labels.append(f"{model}\n{short_method}")
+            m_row = error_df[(error_df["model"] == model) &
+                             (error_df["perturbation_method"] == method) &
+                             (error_df["split"] == "matched")]
+            mm_row = error_df[(error_df["model"] == model) &
+                              (error_df["perturbation_method"] == method) &
+                              (error_df["split"] == "mismatched")]
+            matched_rates.append(
+                m_row["failure_rate"].values[0] * 100 if len(m_row) else 0
+            )
+            mismatched_rates.append(
+                mm_row["failure_rate"].values[0] * 100 if len(mm_row) else 0
+            )
+
+    x = np.arange(len(labels))
+    width = 0.35
+    ax.bar(x - width / 2, matched_rates, width, label="Matched (in-domain)",
+           color="#4C72B0")
+    ax.bar(x + width / 2, mismatched_rates, width,
+           label="Mismatched (out-of-domain)", color="#DD8452")
+    ax.set_ylabel("Failure Rate (%)", fontsize=12)
+    ax.set_title("Perturbation Failure Rate: Matched vs Mismatched", fontsize=13)
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, fontsize=6, ha="center")
+    ax.legend(fontsize=10)
+    ax.grid(True, axis="y", alpha=0.3)
+    fig.tight_layout()
+    path = os.path.join(output_dir, "error_matched_vs_mismatched.png")
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+    print(f"  Saved {path}")
+
+
+def save_perturbation_examples(original: list[dict],
+                                perturbed: dict[str, list[dict]],
+                                output_dir: str, n: int = 3):
+    """Save a few before/after examples per perturbation type."""
+    lines: list[str] = []
+    for method, exs in perturbed.items():
+        lines.append(f"\n{'─' * 60}")
+        lines.append(f"Perturbation: {method}")
+        lines.append(f"{'─' * 60}")
+        for ex in exs[:n]:
+            lines.append(f"  Original:  {ex.get('original_premise', '?')}")
+            lines.append(f"  Perturbed: {ex['premise']}")
+            lines.append("")
+
+    text = "\n".join(lines)
+    path = os.path.join(output_dir, "perturbation_examples.txt")
+    with open(path, "w") as f:
+        f.write(text)
+    print(f"  Saved {path}")
+
+
+def generate_report_assets(
+    perf_df: pd.DataFrame,
+    complex_df: pd.DataFrame,
+    model_names: list[str],
+    original: list[dict],
+    perturbed: dict[str, list[dict]],
+    output_dir: str,
+):
+    """Generate all figures, tables, and analysis for the report."""
+    print("\n== Report Assets ==")
+    generate_scatter_plots(perf_df, complex_df, output_dir)
+    generate_accuracy_drop_chart(perf_df, output_dir)
+    error_df = run_error_analysis(model_names, original, perturbed, output_dir)
+    generate_error_analysis_chart(error_df, output_dir)
+    save_perturbation_examples(original, perturbed, output_dir)
+    print("  Done generating report assets.")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -581,6 +851,11 @@ def main():
     complex_csv = os.path.join(args.output_dir, "complex.csv")
     perf_df.to_csv(perf_csv, index=False)
     complex_df.to_csv(complex_csv, index=False)
+
+    # ── Report assets ─────────────────────────────────────────────────────
+    generate_report_assets(
+        perf_df, complex_df, args.models, examples, perturbed, args.output_dir,
+    )
 
     # Copy data.jsonl to repo root for submission
     root_data = "data.jsonl"

@@ -1,0 +1,38 @@
+
+────────────────────────────────────────────────────────────
+Perturbation: adjective_to_relative_clause
+────────────────────────────────────────────────────────────
+  Original:  The show, which begins each evening at 9:00 p.m. , relates in melodramatic fashion the history of Istanbul while coloured floodlights illuminate the spectacular architecture of the Blue Mosque.
+  Perturbed: The show, which begins each evening at 9:00 p.m. , relates in fashion, which is melodramatic, the history of Istanbul while coloured floodlights illuminate the spectacular architecture of the Blue Mosque.
+
+  Original:  It's thought he used the same architect who worked on the Taj Mahal.
+  Perturbed: It's thought he used the architect, which is same, who worked on the Taj Mahal.
+
+  Original:  as long as you got congressmen and senators that are getting kickbacks kickbacks from these different companies that are getting awarded for the defense contracts that's never going to happen
+  Perturbed: as long as you got congressmen and senators that are getting kickbacks kickbacks from these companies, which is different, that are getting awarded for the defense contracts that's never going to happen
+
+
+────────────────────────────────────────────────────────────
+Perturbation: parenthetical_insertion
+────────────────────────────────────────────────────────────
+  Original:  The show, which begins each evening at 9:00 p.m. , relates in melodramatic fashion the history of Istanbul while coloured floodlights illuminate the spectacular architecture of the Blue Mosque.
+  Perturbed: The show, which begins each evening at 9:00 p.m. ,, as was widely known, relates in melodramatic fashion the history of Istanbul while coloured floodlights illuminate the spectacular architecture of the Blue Mosque.
+
+  Original:  It's thought he used the same architect who worked on the Taj Mahal.
+  Perturbed: It, which was mentioned earlier,'s thought he used the same architect who worked on the Taj Mahal.
+
+  Original:  as long as you got congressmen and senators that are getting kickbacks kickbacks from these different companies that are getting awarded for the defense contracts that's never going to happen
+  Perturbed: as long as you, as was widely known, got congressmen and senators that are getting kickbacks kickbacks from these different companies that are getting awarded for the defense contracts that's never going to happen
+
+
+────────────────────────────────────────────────────────────
+Perturbation: appositive_person_insertion
+────────────────────────────────────────────────────────────
+  Original:  Local legend claims that he wrote part of his great saga, Os Lusadas, in what is now called the Camees Grotto, situated in the spacious tropical Camees Garden.
+  Perturbed: Local legend claims that he wrote part of his great saga, Os Lusadas, a person,, in what is now called the Camees Grotto, situated in the spacious tropical Camees Garden.
+
+  Original:  This is one of the reasons we're growing too weak to fight the Satheri.  "What's wrong with a ceremony of worship, if you must worship your eggshell?" Dave asked.
+  Perturbed: This is one of the reasons we're growing too weak to fight the Satheri. "What's wrong with a ceremony of worship, if you must worship your eggshell?" Dave, a person, asked.
+
+  Original:  The much-previewed profile of Michael Huffington reveals that he is--surprise, surprise--gay.
+  Perturbed: The much-previewed profile of Michael Huffington, a person, reveals that he is--surprise, surprise--gay.
